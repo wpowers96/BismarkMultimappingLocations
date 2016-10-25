@@ -8,6 +8,12 @@ use Getopt::Long;
 use FindBin qw($Bin);
 use lib "$Bin/../lib";
 
+### 25 October 2016: This is a specialised version of Bismark whose sole purpose is to print out a given number of alignments per read (with the option --limit_multimapping <INT>) without
+### without any of the Bismark specific methylation processing. In the first instance we will only look at the Single-End, FastQ, Bowtie 2 mode. I will also set --ambig_bam to TRUE.
+
+ 
+
+
 ## This program is Copyright (C) 2010-16, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
@@ -37,7 +43,11 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$bowtie_version) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$bowtie_version,$limit_multimapping) = process_command_line();
+
+$ambig_bam = 1;  # always on for this program
+warn "[WARNING] This is an *experimental* version of Bismark to report only the position of multimapping reads - but no methylation information whatsoever!\nThe limit for multimapping reads (per thread) has been set to $limit_multimapping\n\n"; sleep(2);
+
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -1451,7 +1461,7 @@ sub start_methylation_call_procedure_single_ends {
   if ($basename){ # Output file basename is set using the -B argument
     $outfile = "${basename}.sam";
   }
-
+  
   $bam = 0 unless (defined $bam);
   
   if ($ambig_bam){
@@ -2319,7 +2329,7 @@ sub process_single_end_fastQ_file_for_methylation_call{
   ### this is the Illumina sequence file; we need the actual sequence to compare it against the genomic sequence in order to make a methylation call.
   ### Now reading in the sequence file sequence by sequence and see if the current sequence was mapped to one (or both) of the converted genomes in either
   ### the C->T or G->A version
-
+  
   ### gzipped version of the infile
   if ($sequence_file =~ /\.gz$/){
     open (IN,"gunzip -c $sequence_file |") or die $!;
@@ -2327,7 +2337,7 @@ sub process_single_end_fastQ_file_for_methylation_call{
   else{
     open (IN,$sequence_file) or die $!;
   }
-
+  
   my $count = 0;
 
   warn "\nReading in the sequence file $sequence_file\n";
@@ -2362,10 +2372,10 @@ sub process_single_end_fastQ_file_for_methylation_call{
 
     my $return;
     if ($bowtie2){
-      $return = check_bowtie_results_single_end_bowtie2 (uc$sequence,$identifier,$quality_value);
-    }
+      $return = check_bowtie_results_single_end_bowtie2 (uc$sequence,$identifier,$quality_value);  # default = Bowtie 2
+     }
     else{
-      $return = check_bowtie_results_single_end(uc$sequence,$identifier,$quality_value); # default Bowtie 1
+      $return = check_bowtie_results_single_end(uc$sequence,$identifier,$quality_value); 
     }
 
     unless ($return){
@@ -2607,11 +2617,10 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 }
 
 sub check_bowtie_results_single_end{
-  my ($sequence,$identifier,$quality_value) = @_;
-
-  unless ($quality_value){ # FastA sequences get assigned a quality value of Phred 40 throughout
-    $quality_value = 'I'x(length$sequence);
-  }
+    my ($sequence,$identifier,$quality_value) = @_;
+    unless ($quality_value){ # FastA sequences get assigned a quality value of Phred 40 throughout
+	$quality_value = 'I'x(length$sequence);
+    }
 
   my %mismatches = ();
   ### reading from the bowtie output files to see if this sequence aligned to a bisulfite converted genome
@@ -2909,7 +2918,8 @@ sub check_bowtie_results_single_end{
 
 sub check_bowtie_results_single_end_bowtie2{
   my ($sequence,$identifier,$quality_value) = @_;
-
+  warn "this is the one we are looking for!\n"; exit;
+  
   unless ($quality_value){ # FastA sequences get assigned a quality value of Phred 40 throughout
     $quality_value = 'I'x(length$sequence);
   }
@@ -7615,6 +7625,7 @@ sub process_command_line{
   my $minins;
   my $unmapped;
   my $multi_map;
+  my $limit_multimapping;
   my $output_dir;
   my $bowtie2;
   my $vanilla;
@@ -7705,7 +7716,8 @@ sub process_command_line{
 				 'cram_ref=s'              => \$cram_ref,
 				 'nucleotide_coverage'     => \$nucleotide_coverage,
 				 'dovetail'                => \$dovetail,
-				);
+				 'limit_multimapping=i'    => \$limit_multimapping,
+);
 
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -7730,6 +7742,15 @@ sub process_command_line{
 
 VERSION
     exit;
+  }
+
+  if (defined $limit_multimapping){
+      if ($limit_multimapping < 1){
+	  die "--limit_multimapping must be a positive integer. Please respecify\n\n";
+      }   
+  }
+  else{
+      $limit_multimapping = 1;
   }
 
 
@@ -8430,10 +8451,13 @@ VERSION
     }
   }
 
+  # in this very special case we also set the reporting option to -a. Remember this may be very, very slow.....
+  push @bowtie_options, '-a'; 
+
 
   ### SUMMARY OF ALL BOWTIE OPTIONS
   my $bowtie_options = join (' ',@bowtie_options);
-
+  print "Bowtie options are $bowtie_options\n";
 
   ### STRAND-SPECIFIC LIBRARIES
   my $directional;
@@ -8580,7 +8604,7 @@ VERSION
     }
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$bowtie_version);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$bowtie_version,$limit_multimapping);
 }
 
 
