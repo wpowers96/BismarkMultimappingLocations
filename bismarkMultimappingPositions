@@ -46,7 +46,7 @@ my @filenames;   # will be populated by processing the command line
 my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$bowtie_version,$limit_multimapping) = process_command_line();
 
 $ambig_bam = 1;  # always on for this program
-warn "[WARNING] This is an *experimental* version of Bismark to report only the position of multimapping reads - but no methylation information whatsoever!\nThe limit for multimapping reads (per thread) has been set to $limit_multimapping\n\n"; sleep(2);
+warn "[WARNING] This is an **EXPERIMENTAL** version of Bismark to report only the position of multimapping reads - but no methylation information whatsoever!\nThe limit for multimapping reads (per thread) has been set to $limit_multimapping\n\n"; sleep(3);
 
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
@@ -2918,15 +2918,12 @@ sub check_bowtie_results_single_end{
 
 sub check_bowtie_results_single_end_bowtie2{
   my ($sequence,$identifier,$quality_value) = @_;
-  warn "this is the one we are looking for!\n"; exit;
+  my $current_count = 0; # the maximum number of ambiguous alignments we print out (determined by --limit_multimap)
   
   unless ($quality_value){ # FastA sequences get assigned a quality value of Phred 40 throughout
-    $quality_value = 'I'x(length$sequence);
+      $quality_value = 'I'x(length$sequence);
   }
 
-  # as of version Bowtie 2 2.0.0 beta7, when input reads are unpaired, Bowtie 2 no longer removes the trailing /1 or /2 from the read name.
-  # $identifier =~ s/\/[1234567890]+$//; # some sequencers don't just have /1 or /2 at the end of read IDs
-  # print "sequence $sequence\nid $identifier\nquality: '$quality_value'\n";
   
   my $alignment_ambiguous = 0;
   my $first_ambig_alignment; # storing the first ambiguous alignment so it can be written out in case '--ambig_bam' was specified
@@ -2937,114 +2934,84 @@ sub check_bowtie_results_single_end_bowtie2{
 
   ### reading from the Bowtie 2 output filehandles
   foreach my $index (0..$#fhs){
-    #  print "Index: $index\n";
-    #   print "$fhs[$index]->{last_line}\n";
-    #   print "$fhs[$index]->{last_seq_id}\n";
-    # sleep (1);
-    ### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
-    next unless ($fhs[$index]->{last_line} and defined $fhs[$index]->{last_seq_id});
-
-    ### if the sequence we are currently looking at produced an alignment we are doing various things with it
-    # print "last seq id: $fhs[$index]->{last_seq_id} and identifier: $identifier\n";
-
-    if ($fhs[$index]->{last_seq_id} eq $identifier) {
-      #  SAM format specifications for Bowtie 2
-      #  (1) Name of read that aligned
-      #  (2) Sum of all applicable flags. Flags relevant to Bowtie are:
-      #        1 The read is one of a pair
-      #        2 The alignment is one end of a proper paired-end alignment
-      #        4 The read has no reported alignments
-      #        8 The read is one of a pair and has no reported alignments
-      #       16 The alignment is to the reverse reference strand
-      #       32 The other mate in the paired-end alignment is aligned to the reverse reference strand
-      #       64 The read is mate 1 in a pair
-      #      128 The read is mate 2 in a pair
-      #      256 The read has multiple mapping states
-      #  (3) Name of reference sequence where alignment occurs (unmapped reads have a *)
-      #  (4) 1-based offset into the forward reference strand where leftmost character of the alignment occurs (0 for unmapped reads)
-      #  (5) Mapping quality (255 means MAPQ is not available)
-      #  (6) CIGAR string representation of alignment (* if unavailable)
-      #  (7) Name of reference sequence where mate's alignment occurs. Set to = if the mate's reference sequence is the same as this alignment's, or * if there is no mate.
-      #  (8) 1-based offset into the forward reference strand where leftmost character of the mate's alignment occurs. Offset is 0 if there is no mate.
-      #  (9) Inferred fragment size. Size is negative if the mate's alignment occurs upstream of this alignment. Size is 0 if there is no mate.
-      # (10) Read sequence (reverse-complemented if aligned to the reverse strand)
-      # (11) ASCII-encoded read qualities (reverse-complemented if the read aligned to the reverse strand). The encoded quality values are on the Phred quality scale and the encoding is ASCII-offset by 33 (ASCII char !), similarly to a FASTQ file.
-      # (12) Optional fields. Fields are tab-separated. bowtie2 outputs zero or more of these optional fields for each alignment, depending on the type of the alignment:
-      # AS:i:<N> Alignment score. Can be negative. Can be greater than 0 in --local mode (but not in --end-to-end mode). Only present if SAM record is for an aligned read.
-      # XS:i:<N> Alignment score for second-best alignment. Can be negative. Can be greater than 0 in --local mode (but not in --end-to-end mode). Only present if the SAM record is for an aligned read and more than one alignment was found for the read.
-      # YS:i:<N> Alignment score for opposite mate in the paired-end alignment. Only present if the SAM record is for a read that aligned as part of a paired-end alignment.
-      # XN:i:<N> The number of ambiguous bases in the reference covering this alignment. Only present if SAM record is for an aligned read.
-      # XM:i:<N> The number of mismatches in the alignment. Only present if SAM record is for an aligned read.
-      # XO:i:<N> The number of gap opens, for both read and reference gaps, in the alignment. Only present if SAM record is for an aligned read.
-      # XG:i:<N> The number of gap extensions, for both read and reference gaps, in the alignment. Only present if SAM record is for an aligned read.
-      # NM:i:<N> The edit distance; that is, the minimal number of one-nucleotide edits (substitutions, insertions and deletions) needed to transform the read string into the reference string. Only present if SAM record is for an aligned read.
-      # YF:Z:<N> String indicating reason why the read was filtered out. See also: Filtering. Only appears for reads that were filtered out.
-      # MD:Z:<S> A string representation of the mismatched reference bases in the alignment. See SAM format specification for details. Only present if SAM record is for an aligned read.
-
-      my ($id,$flag,$mapped_chromosome,$position,$mapping_quality,$cigar,$bowtie_sequence,$qual) = (split (/\t/,$fhs[$index]->{last_line}))[0,1,2,3,4,5,9,10];
-
-      ### If a sequence has no reported alignments there will be a single output line with a bit-wise flag value of 4. We can store the next alignment and move on to the next Bowtie 2 instance
-      if ($flag == 4){
-	## reading in the next alignment, which must be the next sequence
-	my $newline = $fhs[$index]->{fh}-> getline();
-	if ($newline){
-	  chomp $newline;
-	  my ($seq_id) = split (/\t/,$newline);
-	  $fhs[$index]->{last_seq_id} = $seq_id;
-	  $fhs[$index]->{last_line} = $newline;
-	  if ($seq_id eq $identifier){
-	    die "Sequence with ID $identifier did not produce any alignment, but next seq-ID was also $fhs[$index]->{last_seq_id}!\n";
-	  }
-	  next; # next instance
-	}
-	else{
-	  # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
-	  $fhs[$index]->{last_seq_id} = undef;
-	  $fhs[$index]->{last_line} = undef;
-	  next;
-	}
-      }
-
-      # if there are one or more proper alignments we can extract the chromosome number
-      my $chromosome;
-      if ($mapped_chromosome =~ s/_(CT|GA)_converted$//){
-	$chromosome = $mapped_chromosome;
-      }
-      else{
-	die "Chromosome number extraction failed for $mapped_chromosome\n";
-      }
-
-      ### We will use the optional field to determine the best alignment. Later on we extract the number of mismatches and/or indels from the CIGAR string
-      my ($alignment_score,$second_best,$MD_tag);
-      my @fields = split (/\t/,$fhs[$index]->{last_line});
-
-      foreach (11..$#fields){
-	  if ($fields[$_] =~ /AS:i:(.*)/){
-	      $alignment_score = $1;
-	  }
-	  elsif ($fields[$_] =~ /XS:i:(.*)/){
-	      $second_best = $1;
-	  }
-	  elsif ($fields[$_] =~ /MD:Z:(.*)/){
-	      $MD_tag = $1;
-	  }
-      }
+      ### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
+      next unless ($fhs[$index]->{last_line} and defined $fhs[$index]->{last_seq_id});
+      print "Index: $index\n";
+      print "$fhs[$index]->{last_line}\n";
+      print "$fhs[$index]->{last_seq_id}\n";
+      print "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n";
+      sleep (1);
       
-      my $overwrite = 0; # If we get 2 alignments to the very same position, e.g. to OT with and AS of -156 and to CTOB with and AS of 0 we need the latter to trump the former, else
-      # the read will be assigned to the wrong strand which may result in incorrect methylation calls.
-      # this was brought to our attention by Sylvain Foret (ANU Canberra), 13 April 2016
-      
-      if (!defined $best_AS_so_far){
-	  $best_AS_so_far = $alignment_score;
-	  $overwrite++;
-	  # warn "First alignment score, setting \$best_AS_so_far to $best_AS_so_far\n";
-	  if ($ambig_bam){ # also setting the first_ambig_alignment
+      ### if the sequence we are currently looking at produced an alignment we are going to print it to AMBIG.bam until we hit the limit set by --limit_multimapping
+      print "last seq id: $fhs[$index]->{last_seq_id} and identifier: $identifier\n";
+
+      if ($fhs[$index]->{last_seq_id} eq $identifier) {
+	  my ($id,$flag,$mapped_chromosome,$position,$mapping_quality,$cigar,$bowtie_sequence,$qual) = (split (/\t/,$fhs[$index]->{last_line}))[0,1,2,3,4,5,9,10];
+
+	  ### If a sequence has no reported alignments there will be a single output line with a bit-wise flag value of 4. We can store the next alignment and move on to the next Bowtie 2 instance
+	  if ($flag == 4){
+	      ## reading in the next alignment, which must be the next sequence
+	      my $newline = $fhs[$index]->{fh}-> getline();
+	      if ($newline){
+		  chomp $newline;
+		  my ($seq_id) = split (/\t/,$newline);
+		  $fhs[$index]->{last_seq_id} = $seq_id;
+		  $fhs[$index]->{last_line} = $newline;
+		  if ($seq_id eq $identifier){
+		      die "Sequence with ID $identifier did not produce any alignment, but next seq-ID was also $fhs[$index]->{last_seq_id}!\n";
+		  }
+		  next; # next Bowtie 2 index
+	      }
+	      else{
+		  # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
+		  $fhs[$index]->{last_seq_id} = undef;
+		  $fhs[$index]->{last_line} = undef;
+		  next;
+	      }
+	  }
+	  
+	  # if there are one or more proper alignments we can extract the chromosome number
+	  if ($ambig_bam){ # ambig_alignment
 	      $first_ambig_alignment = $fhs[$index]->{last_line};
-	      $first_ambig_alignment =~ s/_(CT|GA)_converted//;
-	      # warn "$first_ambig_alignment\n"; sleep(1);
+	      $first_ambig_alignment =~ s/_(CT|GA)_converted//; # need to get a proper chromosome number
+	      warn "AMBIG: $first_ambig_alignment\n"; sleep(1);
 	  }	
-      }
-      else{
+	  
+
+	  my $chromosome;
+	  if ($mapped_chromosome =~ s/_(CT|GA)_converted$//){
+	      $chromosome = $mapped_chromosome;
+	  }
+	  else{
+	      die "Chromosome number extraction failed for $mapped_chromosome\n";
+	  }
+	  
+	  ### We will use the optional field to determine the best alignment. Later on we extract the number of mismatches and/or indels from the CIGAR string
+	  my ($alignment_score,$second_best,$MD_tag);
+	  my @fields = split (/\t/,$fhs[$index]->{last_line});
+	  
+	  foreach (11..$#fields){
+	      if ($fields[$_] =~ /AS:i:(.*)/){
+		  $alignment_score = $1;
+	      }
+	      elsif ($fields[$_] =~ /XS:i:(.*)/){
+		  $second_best = $1;
+	      }
+	      elsif ($fields[$_] =~ /MD:Z:(.*)/){
+		  $MD_tag = $1;
+	      }
+	  }
+	  
+	  my $overwrite = 0; # If we get 2 alignments to the very same position, e.g. to OT with and AS of -156 and to CTOB with and AS of 0 we need the latter to trump the former, else
+	  # the read will be assigned to the wrong strand which may result in incorrect methylation calls.
+	  # this was brought to our attention by Sylvain Foret (ANU Canberra), 13 April 2016
+	  
+	  if (!defined $best_AS_so_far){
+	      $best_AS_so_far = $alignment_score;
+	      $overwrite++;
+	      # warn "First alignment score, setting \$best_AS_so_far to $best_AS_so_far\n";
+	    }
+	  else{
 	  if ($alignment_score >= $best_AS_so_far){ # AS are generally negative with a maximum of 0;
 	      # 19 07 2016: changed this to >= so that equally good alignments are also added. Ambiguous alignments from different threads will be identified later on
 	      $best_AS_so_far = $alignment_score;
@@ -3070,123 +3037,28 @@ sub check_bowtie_results_single_end_bowtie2{
       
       # warn "First  best alignment_score is: '$alignment_score'\n";
       # warn "MD tag is: '$MD_tag'\n";
-      die "Failed to extract alignment score ($alignment_score) and MD tag ($MD_tag) from line $fhs[$index]->{last_line}!\n" unless (defined $alignment_score and defined $MD_tag);
-      
-      if (defined $second_best){
-	  # warn "second best alignment_score is: '$second_best'\n\n";
+	 
+	  #until ($fhs[$index]->{last_seq_id} ne $identifier){
+	  #	  my $newline = $fhs[$index]->{fh}-> getline();
+	  #	  if ($newline){
+	  #	      chomp $newline;
+	  #	      my ($seq_id) = split (/\t/,$newline);
+	  #	      $fhs[$index]->{last_seq_id} = $seq_id;
+	  #	      $fhs[$index]->{last_line} = $newline;
+	  #	  }
+	  #	  else{
+	  #	      # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
+	  #	      $fhs[$index]->{last_seq_id} = undef;
+	  #	      $fhs[$index]->{last_line} = undef;
+	  #	      last; # break free in case we have reached the end of the alignment output
+	  #	  }
+	  #     }
+	  #  warn "Index: $index\tThe current Seq-ID is $identifier, skipped all ambiguous sequences until the next ID which is: $fhs[$index]->{last_seq_id}\n";
+	  #  }
 	  
-	  # If the first alignment score is the same as the alignment score of the second best hit we keep a memory of this
-	  if ($alignment_score == $second_best){
-	      
-	      # checking to see if this read produced the best alignment
-	      if ($alignment_score == $best_AS_so_far){  # yes this read is the best one so far, however it is ambiguous
-		  # warn "Read is ambiguous within the same thread, or otherwise as good as the best one so far. Setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
-		  $amb_same_thread = 1;
-	      }
-	      else{
-		  # warn "This read has a worse alignments score than the best alignment so far and will be ignored even though it is ambiguous in itself\n";
-	      }
-	      
-	      ### if there is a better alignment later on -> fine. If not, the read will get booted altogether
-	      
-	      ## need to read and discard all additional ambiguous reads until we reach the next sequence
-	      until ($fhs[$index]->{last_seq_id} ne $identifier){
-		  my $newline = $fhs[$index]->{fh}-> getline();
-		  if ($newline){
-		      chomp $newline;
-		      my ($seq_id) = split (/\t/,$newline);
-		      $fhs[$index]->{last_seq_id} = $seq_id;
-		      $fhs[$index]->{last_line} = $newline;
-		  }
-		  else{
-		      # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
-		      $fhs[$index]->{last_seq_id} = undef;
-		      $fhs[$index]->{last_line} = undef;
-		      last; # break free in case we have reached the end of the alignment output
-		  }
-	      }
-	      #  warn "Index: $index\tThe current Seq-ID is $identifier, skipped all ambiguous sequences until the next ID which is: $fhs[$index]->{last_seq_id}\n";
-	  }
-	  else{ # the next best alignment has a lower alignment score than the current read, so we can safely store the current alignment
-	      
-	      my $alignment_location = join (":",$chromosome,$position);
-	      
-	      ### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
-	      ### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
-	      ### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
-	      ### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB 
-	      
-	      if ($overwrite){
-		  $alignments{$alignment_location}->{seq_id} = $id; 
-		  $alignments{$alignment_location}->{alignment_score} = $alignment_score;
-		  $alignments{$alignment_location}->{alignment_score_second_best} = $second_best;
-		  $alignments{$alignment_location}->{bowtie_sequence} = $bowtie_sequence;
-		  $alignments{$alignment_location}->{index} = $index;
-		  $alignments{$alignment_location}->{chromosome} = $chromosome;
-		  $alignments{$alignment_location}->{position} = $position;
-		  $alignments{$alignment_location}->{CIGAR} = $cigar;
-		  $alignments{$alignment_location}->{MD_tag} = $MD_tag;
-	      }
-	      
-	      ### now reading and discarding all (inferior) alignments of this sequencing read until we hit the next sequence
-	      until ($fhs[$index]->{last_seq_id} ne $identifier){
-		  my $newline = $fhs[$index]->{fh}-> getline();
-		  if ($newline){
-		      chomp $newline;
-		      my ($seq_id) = split (/\t/,$newline);
-		      $fhs[$index]->{last_seq_id} = $seq_id;
-		      $fhs[$index]->{last_line} = $newline;
-		  }
-		  else{
-		      # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
-		      $fhs[$index]->{last_seq_id} = undef;
-		      $fhs[$index]->{last_line} = undef;
-		      last; # break free in case we have reached the end of the alignment output
-		  }
-	      }
-	      #  warn "Index: $index\tThe current Seq-ID is $identifier, skipped all ambiguous sequences until the next ID which is: $fhs[$index]->{last_seq_id}\n";
-	  }
       }
-      else{ # there is no second best hit, so we can just store this one and read in the next sequence
-
-	  my $alignment_location = join (":",$chromosome,$position);
-	  # warn "There is no second best hit. Overwrite status: $overwrite\n";
-	  ### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
-	  ### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
-	  ### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
-	  ### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB 
-	  
-	  if ($overwrite){
-	      $alignments{$alignment_location}->{seq_id} = $id; 
-	      $alignments{$alignment_location}->{alignment_score} = $alignment_score;
-	      $alignments{$alignment_location}->{alignment_score_second_best} = undef;
-	      $alignments{$alignment_location}->{bowtie_sequence} = $bowtie_sequence;
-	      $alignments{$alignment_location}->{index} = $index;
-	      $alignments{$alignment_location}->{chromosome} = $chromosome;
-	      $alignments{$alignment_location}->{position} = $position;
-	      $alignments{$alignment_location}->{MD_tag} = $MD_tag;
-	      $alignments{$alignment_location}->{CIGAR} = $cigar;
-	  }
-	  
-	  my $newline = $fhs[$index]->{fh}-> getline();
-	  if ($newline){
-	      chomp $newline;
-	      my ($seq_id) = split (/\t/,$newline);
-	      $fhs[$index]->{last_seq_id} = $seq_id;
-	      $fhs[$index]->{last_line} = $newline;
-	      if ($seq_id eq $identifier){
-		  die "Sequence with ID $identifier did not have a second best alignment, but next seq-ID was also $fhs[$index]->{last_seq_id}!\n";
-	      }
-	  }
-	  else{
-	      # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
-	      $fhs[$index]->{last_seq_id} = undef;
-	      $fhs[$index]->{last_line} = undef;
-	  }
-      }
-    }
   }
-  
+  exit;
   ### If there were several equally good alignments for the best alignment score we will boot the read
   if ($amb_same_thread){
       $alignment_ambiguous = 1;
