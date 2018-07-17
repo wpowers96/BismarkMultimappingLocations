@@ -8,8 +8,8 @@ use Getopt::Long;
 use FindBin qw($Bin);
 use lib "$Bin/../lib";
 
-### 17 July 2018: Whitney Powers (powers.463@osu.edu) changed -a to -k 20 (must run with --limit <= 20 (I think!)) If this works
-### I will change to -k {limit}
+### 17 July 2018: Whitney Powers (powers.463@osu.edu) changed -a to -k $limit_multimapping 
+### I hope this works!
 
 
 ### 25 October 2016: This is a specialised version of Bismark whose sole purpose is to print out a given number of alignments per read (with the option --limit_multimapping <INT>) without
@@ -7250,8 +7250,8 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
     warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options $bt2_options)\n";
     warn "Using Bowtie 2 index: $fh->{bisulfiteIndex}\n\n";
 
-    ### here we manually set -k 20
-    open ($fh->{fh},"$path_to_bowtie -k 20 $bt2_options -x $fh->{bisulfiteIndex} -U $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+    ### here we manually set -k $limit_multimapping
+    open ($fh->{fh},"$path_to_bowtie -k $limit_multimapping $bt2_options -x $fh->{bisulfiteIndex} -U $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
     ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
     while (1){
       $_ = $fh->{fh}->getline();
