@@ -8,8 +8,8 @@ use Getopt::Long;
 use FindBin qw($Bin);
 use lib "$Bin/../lib";
 
-### 17 July 2018: Whitney Powers (powers.463@osu.edu) changed -a to -k $limit_multimapping 
-### I hope this works!
+### 17 July 2018: Whitney Powers (powers.463@osu.edu) changed -a to -k $limit_multimapping in the bowtie2 call 
+### This dramatically increases speed without affecting the returned locations
 
 
 ### 25 October 2016: This is a specialised version of Bismark whose sole purpose is to print out a given number of alignments per read (with the option --limit_multimapping <INT>) without
